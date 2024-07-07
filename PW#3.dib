@@ -32,6 +32,7 @@
 
 #!csharp
 
+g usin
 //
 // Вычисление определенного интеграла
 //
@@ -44,10 +45,36 @@ class DefiniteIntegral
     // threadsNumber - число потоков, которые используются для вычислений
     //
     public static double Solve(double a, double b, Func<double, double> function, double step, int threadsnumber)
+{
+    var result = 0.0;
+    var totalStep = (int)((b - a) / step);
+    var countStep = totalStep / threadsnumber;
+    var obj = new object();
+    var countdownEvent = new CountdownEvent(threadsnumber);
+    var threads = new Thread[threadsnumber];
+    for (int i = 0; i < threadsnumber; i++)
     {
-        // отсюда надо начинать реализацию задачи
-        return 0.0;
+        int threadIndex = i;
+        threads[i] = new Thread(() => Calc(threadIndex));
+        threads[i].Start();
     }
+    countdownEvent.Wait();
+    return result;
+
+    void Calc(int indexThread)
+    {
+        var sum = 0.0;
+        var start = indexThread * countStep;
+        var end = (indexThread == threadsnumber - 1) ? totalStep : start + countStep;
+
+        for (int i = start; i < end; i++)
+        {
+            sum += (function(a + i * step) + function(a + (i + 1) * step)) * step / 2.0;
+        }
+        result += sum;
+        countdownEvent.Signal();
+    }
+}
 }
 
 #!csharp

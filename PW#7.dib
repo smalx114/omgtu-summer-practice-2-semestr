@@ -38,3 +38,139 @@ ServerThread может менять свое поведение для обра
 Отсутствие Команд в очереди потока не должно требовать значительных затрат процессорного времени. Значительными считаются затраты, которые зависят от времени простоя потока.
 
 Написать проверку, которая гарантирует правильное выполнение команд HardStop и SoftStop.
+
+#!csharp
+
+using System.Threading;
+using System.Collections.Concurrent;
+using System.Windows.Input;
+
+class ServerThread
+{
+    internal Thread thread;
+    internal BlockingCollection<ICommand> queue = new BlockingCollection<ICommand>(1000);
+    internal Func<bool> canRunning = () => true;
+
+    public ServerThread()
+    {
+        thread = new Thread(() => ExecuteTread());
+        thread.Start();
+    }
+
+    void ExecuteTread()
+    {
+        while (canRunning())
+        {
+            var cmd = queue.Take();
+            try
+            {
+                cmd.Execute();
+            }
+            catch (Exception) { }
+        }
+    }
+
+    public void QueueAdd(ICommand cmd)
+    {
+        queue.Add(cmd);
+    }
+
+    public void ThreadJoin()
+    {
+        thread.Join();
+    }
+}
+
+class HardStopCommand : ICommand
+{
+    ServerThread thread;
+    public HardStopCommand(ServerThread thread) => this.thread = thread;
+    public void Execute()
+    {
+        if (Thread.CurrentThread != thread.thread)
+        {
+            throw new Exception();
+        }
+        thread.canRunning = () => false;
+    }
+}
+
+class SoftStopCommand : ICommand
+{
+    ServerThread thread;
+    public SoftStopCommand(ServerThread thread) => this.thread = thread;
+    public void Execute()
+    {
+        if (Thread.CurrentThread != thread.thread)
+        {
+            throw new Exception();
+        }
+        thread.canRunning = () => thread.queue.Count > 0;
+    }
+}
+
+class EmptyCommand : ICommand
+{
+    public bool wasCalled { get; set; }
+    public EmptyCommand() => this.wasCalled = false;
+    public void Execute() => this.wasCalled = true;
+}
+
+class CommandWrapper : ICommand
+{
+    ICommand intr;
+    Action before;
+
+    public CommandWrapper(ICommand intr, Action before)
+    {
+        this.intr = intr;
+        this.before = before;
+    }
+
+    public void Execute()
+    {
+        before();
+        intr.Execute();
+    }
+}
+
+#!csharp
+
+#r "nuget: xunit, 2.8.1"
+using Xunit;
+
+class UnitTest
+{
+    [Fact]
+    public static void HardTest()
+    {
+        var manualResetEvent = new ManualResetEvent(false);
+        var t = new ServerThread();
+        var hardStop = new CommandWrapper(new HardStopCommand(t), () => manualResetEvent.WaitOne());
+        t.QueueAdd(hardStop);
+        var empty = new EmptyCommand();
+        t.QueueAdd(empty);
+        manualResetEvent.Set();
+        t.ThreadJoin();
+        Assert.False(empty.wasCalled);
+    }
+
+    [Fact]
+    public static void SoftTest()
+    {
+        var manualResetEvent = new ManualResetEvent(false);
+        var t = new ServerThread();
+        var softStop = new CommandWrapper(new SoftStopCommand(t), () => manualResetEvent.WaitOne());
+        t.QueueAdd(softStop);
+        var empty = new EmptyCommand();
+        t.QueueAdd(empty);
+        manualResetEvent.Set();
+        t.ThreadJoin();
+        Assert.True(empty.wasCalled);
+    }
+}
+
+#!csharp
+
+UnitTest.HardTest();
+UnitTest.SoftTest();
