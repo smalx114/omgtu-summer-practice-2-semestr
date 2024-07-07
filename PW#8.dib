@@ -35,9 +35,15 @@
 
 #!csharp
 
+public interface ICommand
+{
+    string name { get; }
+    void Execute();
+}
+
 public interface IScheduler
 {
-    bool HasCommand()
+    bool HasCommand();
     ICommand Select();
     void Add(ICommand cmd);
 }
@@ -55,3 +61,119 @@ public interface IScheduler
 Необходимо учесть этот момент при реализации очереди.
 
 2. Для обепечения справедливости стратегии планировщика в слабом смысле использовать стратегию Round Robbin (циклическую) для определения следующего потока на исполнение.
+
+#!csharp
+
+using System.Threading;
+using System.Collections.Concurrent;
+
+public class ServerThread
+{
+    private IScheduler scheduler;
+    private Thread thread;
+    private bool canRunning = true;
+
+    public ServerThread(IScheduler scheduler)
+    {
+        this.scheduler = scheduler ?? throw new ArgumentNullException(nameof(scheduler));
+        thread = new Thread(ExecuteThread);
+        thread.Start();
+    }
+
+    private void ExecuteThread()
+    {
+        while (canRunning)
+        {
+            if (scheduler.HasCommand())
+            {
+                var cmd = scheduler.Select();
+                try
+                {
+                    cmd.Execute();
+                }
+                catch (Exception) { }
+            }
+        }
+    }
+
+    public void ConsvStop()
+    {
+        canRunning = false;
+        if (Thread.CurrentThread != thread)
+        {
+            thread.Join();
+        }
+    }
+}
+
+public class RoundRobin : IScheduler
+{
+    private ConcurrentQueue<ICommand> queue = new ConcurrentQueue<ICommand>();
+
+    public void Add(ICommand cmd)
+    {
+        queue.Enqueue(cmd);
+    }
+    public bool HasCommand()
+    {
+        return !queue.IsEmpty;
+    }
+
+    public ICommand Select()
+    {
+        if (queue.TryDequeue(out ICommand cmd))
+        {
+            return cmd;
+        }
+        return null;
+    }
+}
+
+public class Scheduler : ICommand
+{
+    private ICommand cmd;
+    private IScheduler scheduler;
+    private int max;
+    private int counter;
+    public string name => cmd.name;
+
+    public Scheduler(ICommand cmd, IScheduler scheduler, int max)
+    {
+        this.cmd = cmd ?? throw new ArgumentNullException(nameof(cmd)); 
+        this.scheduler = scheduler ?? throw new ArgumentNullException(nameof(scheduler));
+        this.max = max;
+        counter = 0;
+    }
+
+    public void Execute()
+    {
+        counter++;
+        cmd.Execute();
+        if (counter < max)
+        {
+            scheduler.Add(this);
+        }
+    }
+}
+
+public class TestCommand : ICommand
+{
+    public string name { get; }
+    private int counter = 0;
+    private int max;
+
+    public void Execute()
+    {
+        Console.WriteLine($"The command {name} is being executed for the {++counter} time.");
+        if (counter >= max)
+        {
+            Console.WriteLine($"\tThis is the maximum performance of {name}.");
+        }
+    }
+
+    public TestCommand(string name, int max)
+    {
+        this.name = name;
+        this.max = max;
+    }
+}
